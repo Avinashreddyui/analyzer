@@ -1,101 +1,127 @@
-import requests
-import pandas as pd
-from textblob import TextBlob
-from bs4 import BeautifulSoup
-from googlesearch import search
-import matplotlib.pyplot as plt
 import streamlit as st
+import numpy as np
+import pandas as pd
 import yfinance as yf
-import json
+import ta
+import requests
+from bs4 import BeautifulSoup
+from transformers import pipeline
+from sklearn.preprocessing import MinMaxScaler
+from xgboost import XGBRegressor
+from datetime import datetime
+import threading
 
-# Function to fetch Google search results
-def get_google_news(query, num_results=5):
-    search_results = search(query + " news", num_results=num_results)
-    return list(search_results)
+# ✅ Load Sentiment Analysis Model
+sentiment_analyzer = pipeline("sentiment-analysis")
 
-# Function to fetch Yahoo Finance news
-def get_yahoo_news(ticker):
-    try:
-        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={ticker}&newsCount=5"
-        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
-        news_data = response.json()
-        articles = [article['link'] for article in news_data.get('news', [])]
-        return articles
-    except Exception as e:
-        return []
+# ✅ Function to Fetch News Headlines and Analyze Sentiment
+@st.cache_data
+def get_sentiment_score(ticker):
+    search_url = f"https://www.google.com/search?q={ticker}+stock+news&tbm=nws"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(search_url, headers=headers)
+    soup = BeautifulSoup(response.text, "html.parser")
 
-# Function to fetch economic data from FRED API
-def get_economic_data(series_id):
-    api_key = "cca80011714bb0c446df5ccae205964c"  # Replace with your FRED API key
-    url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json"
-    try:
-        response = requests.get(url)
-        data = response.json()
-        observations = data.get("observations", [])
-        return pd.DataFrame(observations)
-    except Exception as e:
-        return pd.DataFrame()
-
-# Function to extract article content
-def extract_article_content(url):
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        paragraphs = soup.find_all('p')
-        return ' '.join([p.text for p in paragraphs])
-    except Exception as e:
-        return ""
-
-# Sentiment Analysis Function
-def analyze_sentiment(text):
-    sentiment_score = TextBlob(text).sentiment.polarity
-    if sentiment_score <= -0.5:
-        return "Negative"
-    elif -0.5 < sentiment_score < -0.1:
-        return "Weak Negative"
-    elif -0.1 <= sentiment_score <= 0.1:
-        return "Neutral"
-    elif 0.1 < sentiment_score < 0.5:
-        return "Weak Positive"
-    else:
-        return "Positive"
-
-# Main function
-def analyze_market_news(keyword):
-    news_urls = get_google_news(keyword) + get_yahoo_news(keyword)
-    data = []
-    for url in news_urls:
-        content = extract_article_content(url)
-        if content:
-            sentiment = analyze_sentiment(content)
-            data.append([url, sentiment])
-    df = pd.DataFrame(data, columns=['URL', 'Sentiment'])
-    return df
-
-# Streamlit Dashboard
-def main():
-    st.title("Market News & Economic Data Sentiment Analysis")
-    keyword = st.text_input("Enter keyword (e.g., economic news, AAPL stock):", "economic news")
-    economic_indicator = st.selectbox("Select Economic Indicator:", ["GDP", "CPI", "Unemployment Rate"])
+    headlines = [item.get_text() for item in soup.find_all("div", class_="BNeawe vvjwJb AP7Wnd")][:5]
     
-    if st.button("Analyze"):
-        df = analyze_market_news(keyword)
-        st.write(df)
-        
-        # Plot Sentiment Analysis
-        st.subheader("Sentiment Distribution")
-        sentiment_counts = df['Sentiment'].value_counts()
-        st.bar_chart(sentiment_counts)
-        
-        # Fetch and Display Economic Data
-        indicator_mapping = {"GDP": "GDP", "CPI": "CPIAUCSL", "Unemployment Rate": "UNRATE"}
-        econ_data = get_economic_data(indicator_mapping[economic_indicator])
-        if not econ_data.empty:
-            st.subheader(f"Economic Data: {economic_indicator}")
-            st.line_chart(econ_data.set_index("date")['value'].astype(float))
-        else:
-            st.write("No economic data available.")
+    if not headlines:
+        return 0  # Neutral sentiment if no headlines
+    
+    scores = []
+    
+    def analyze_sentiment(headline):
+        try:
+            result = sentiment_analyzer(headline)[0]
+            sentiment = result['label']
+            score = result['score']
+            scores.append(score if sentiment == "POSITIVE" else -score if sentiment == "NEGATIVE" else 0)
+        except Exception as e:
+            print(f"Sentiment Analysis Error: {e}")
+            return 0
+    
+    threads = [threading.Thread(target=analyze_sentiment, args=(headline,)) for headline in headlines]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    
+    return np.mean(scores) if scores else 0
 
-if __name__ == "__main__":
-    main()
+# ✅ Fetch NIFTY 50 Stock List
+@st.cache_data
+def get_nifty50_stocks():
+    nifty50_tickers = [
+        "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", "HINDUNILVR.NS", "SBIN.NS", "BAJFINANCE.NS", "KOTAKBANK.NS", "BHARTIARTL.NS",
+        "ITC.NS", "ASIANPAINT.NS", "HCLTECH.NS", "LT.NS", "MARUTI.NS", "AXISBANK.NS", "SUNPHARMA.NS", "TITAN.NS", "ULTRACEMCO.NS", "WIPRO.NS",
+        "M&M.NS", "ONGC.NS", "POWERGRID.NS", "TATASTEEL.NS", "TECHM.NS", "HDFCLIFE.NS", "COALINDIA.NS", "INDUSINDBK.NS", "JSWSTEEL.NS", "NTPC.NS",
+        "NESTLEIND.NS", "GRASIM.NS", "BPCL.NS", "HINDALCO.NS", "CIPLA.NS", "ADANIPORTS.NS", "DRREDDY.NS", "DIVISLAB.NS", "BRITANNIA.NS", "HEROMOTOCO.NS",
+        "EICHERMOT.NS", "APOLLOHOSP.NS", "BAJAJFINSV.NS", "TATAMOTORS.NS", "SBILIFE.NS", "UPL.NS", "DLF.NS", "ICICIPRULI.NS", "PIDILITIND.NS", "GAIL.NS"
+    ]
+    return sorted(nifty50_tickers)
+
+# ✅ Streamlit UI
+st.title("Fast Stock Price Prediction with and without Sentiment Analysis")
+
+# User input for stock ticker
+ticker = st.selectbox("Select a NIFTY 50 Stock", get_nifty50_stocks(), index=0)
+
+# Date input fields
+start_date = st.date_input("Select Start Date", datetime(2020, 1, 1))
+end_date = st.date_input("Select End Date", datetime(2025, 2, 1))
+
+if st.button("Predict Stock Price"):
+    with st.spinner("Fetching stock data..."):
+        df = yf.download(ticker, start=start_date, end=end_date)
+
+        if df.empty:
+            st.error("No data available for this stock. Try another ticker.")
+            st.stop()
+
+        # Save downloaded data as CSV
+        df.to_csv("downloaded_stock_data.csv")
+        st.success("Stock data downloaded successfully!")
+        
+        # Process and clean data
+        df = df.reset_index()
+        df['Date'] = pd.to_datetime(df['Date'])
+
+        df['sentiment_score'] = get_sentiment_score(ticker)
+
+        # Display sentiment analysis
+        st.subheader("Sentiment Analysis")
+        sentiment_value = df['sentiment_score'].iloc[0]
+        if sentiment_value > 0.05:
+            st.write("Overall Sentiment: **Positive**")
+        elif sentiment_value < -0.05:
+            st.write("Overall Sentiment: **Negative**")
+        else:
+            st.write("Overall Sentiment: **Neutral**")
+
+        # Train XGBoost model
+        features = ['Open', 'High', 'Low', 'Close', 'sentiment_score']
+        X = df[features]
+        y = df[['Open', 'High', 'Low', 'Close']]
+        
+        scaler_X = MinMaxScaler()
+        scaler_y = MinMaxScaler()
+        X_scaled = scaler_X.fit_transform(X)
+        y_scaled = scaler_y.fit_transform(y)
+        
+        @st.cache_resource
+        def train_xgboost(X_train, y_train):
+            model = XGBRegressor(n_estimators=200, learning_rate=0.05, max_depth=5, random_state=42)
+            model.fit(X_train, y_train)
+            return model
+
+        xgb_model = train_xgboost(X_scaled[:-1], y_scaled[:-1])
+        next_day_features = X_scaled[-1].reshape(1, -1)
+        predicted_next_day_ohlc = xgb_model.predict(next_day_features)
+        predicted_next_day_ohlc = scaler_y.inverse_transform(predicted_next_day_ohlc.reshape(1, -1))
+
+        st.subheader("Predicted OHLC for Next Trading Day")
+        st.write(f"**Open:** {predicted_next_day_ohlc[0, 0]:.2f}")
+        st.write(f"**High:** {predicted_next_day_ohlc[0, 1]:.2f}")
+        st.write(f"**Low:** {predicted_next_day_ohlc[0, 2]:.2f}")
+        st.write(f"**Close:** {predicted_next_day_ohlc[0, 3]:.2f}")
+
+st.write("Developed by [Your Name]")
