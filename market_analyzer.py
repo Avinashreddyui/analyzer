@@ -69,6 +69,8 @@ ticker = st.selectbox("Select a NIFTY 50 Stock", get_nifty50_stocks(), index=0)
 start_date = st.date_input("Select Start Date", datetime(2020, 1, 1))
 end_date = st.date_input("Select End Date", datetime(2025, 2, 1))
 
+prediction_date = st.date_input("Select Prediction Date", datetime(2025, 2, 2))
+
 if st.button("Predict Stock Price"):
     with st.spinner("Fetching stock data..."):
         df = yf.download(ticker, start=start_date, end=end_date)
@@ -85,7 +87,7 @@ if st.button("Predict Stock Price"):
         df = df.reset_index()
         df['Date'] = pd.to_datetime(df['Date'])
 
-        df['sentiment_score'] = get_sentiment_score(ticker)
+        df['sentiment_score'] = get_sentiment_score(ticker) if prediction_date else 0
 
         # Display sentiment analysis
         st.subheader("Sentiment Analysis")
@@ -118,7 +120,7 @@ if st.button("Predict Stock Price"):
         predicted_next_day_ohlc = xgb_model.predict(next_day_features)
         predicted_next_day_ohlc = scaler_y.inverse_transform(predicted_next_day_ohlc.reshape(1, -1))
 
-        st.subheader("Predicted OHLC for Next Trading Day")
+        st.subheader(f"Predicted OHLC for {prediction_date.strftime('%Y-%m-%d')}")
         st.write(f"**Open:** {predicted_next_day_ohlc[0, 0]:.2f}")
         st.write(f"**High:** {predicted_next_day_ohlc[0, 1]:.2f}")
         st.write(f"**Low:** {predicted_next_day_ohlc[0, 2]:.2f}")
