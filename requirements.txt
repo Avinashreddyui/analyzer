@@ -9,7 +9,8 @@ transformers
 scikit-learn
 xgboost
 torch
-timetensorflow
+time
+tensorflow
 joblib
 os
 datetime
