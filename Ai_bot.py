@@ -22,12 +22,25 @@ def send_telegram_message(message):
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
     requests.post(url, json=payload)
 
-def fetch_stock_data(ticker, period="30d", interval="5m"):
-    stock = yf.download(ticker, period=period, interval=interval)
-    if stock.empty:
-        st.error(f"No data available for {ticker}. Skipping...")
-        return None
-    return stock
+def fetch_stock_data(ticker, period="30d", interval="5m", retries=5):
+    attempt = 0
+    while attempt < retries:
+        try:
+            stock = yf.download(ticker, period=period, interval=interval)
+            if stock.empty:
+                st.error(f"No data available for {ticker}. Skipping...")
+                return None
+            return stock
+        except yf.utils.exceptions.YFRateLimitError:
+            wait_time = 2 ** attempt  # Exponential backoff
+            st.warning(f"Rate limit exceeded for {ticker}. Retrying in {wait_time} seconds...")
+            time.sleep(wait_time)
+            attempt += 1
+        except Exception as e:
+            st.error(f"Error fetching data for {ticker}: {e}")
+            return None
+    st.error(f"Failed to fetch data for {ticker} after multiple retries.")
+    return None
 
 def prepare_lstm_data(data):
     if data is None or data.empty:
